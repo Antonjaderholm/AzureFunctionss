@@ -1,5 +1,6 @@
 ﻿using AzureFunction.Models;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using System;
@@ -8,71 +9,158 @@ using System.Threading.Tasks;
 
 namespace AzureFunction.Data
 {
-    public class CameraData
+    public class CameraData : ICameraData
     {
         private readonly IMongoCollection<Camera> _collection;
+        private readonly ILogger<CameraData>? _logger;
 
-        public CameraData(string collectionName, IConfiguration configuration)
+        public CameraData(string collectionName, IConfiguration configuration, ILogger<CameraData>? logger = null)
         {
+            _logger = logger;
+
             var connectionString = configuration["DefaultConnection"];
             if (string.IsNullOrEmpty(connectionString))
             {
                 throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
             }
 
-            var client = new MongoClient(connectionString);
-            var database = client.GetDatabase("CameraDB");
-            _collection = database.GetCollection<Camera>(collectionName);
+            try
+            {
+                var client = new MongoClient(connectionString);
+                var database = client.GetDatabase("CameraDB");
+                _collection = database.GetCollection<Camera>(collectionName);
+
+                _logger?.LogInformation("Successfully connected to MongoDB database: CameraDB, collection: {CollectionName}", collectionName);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Failed to connect to MongoDB");
+                throw;
+            }
         }
 
         public async Task<List<Camera>> GetAllCameras()
         {
-            return await _collection.Find(_ => true).ToListAsync();
+            try
+            {
+                var cameras = await _collection.Find(_ => true).ToListAsync();
+                _logger?.LogInformation("Retrieved {Count} cameras", cameras.Count);
+                return cameras;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error retrieving all cameras");
+                throw;
+            }
         }
 
-        public async Task<Camera> GetCameraById(string id)
+        public async Task<Camera?> GetCameraById(string id)
         {
-            if (!ObjectId.TryParse(id, out _))
+            if (string.IsNullOrEmpty(id) || !ObjectId.TryParse(id, out _))
             {
+                _logger?.LogWarning("Invalid camera ID provided: {Id}", id);
                 return null;
             }
 
-            return await _collection.Find(camera => camera.Id == id).FirstOrDefaultAsync();
+            try
+            {
+                var camera = await _collection.Find(camera => camera.Id == id).FirstOrDefaultAsync();
+                if (camera == null)
+                {
+                    _logger?.LogWarning("Camera not found with ID: {Id}", id);
+                }
+                return camera;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error retrieving camera with ID: {Id}", id);
+                throw;
+            }
         }
 
         public async Task<Camera> CreateCamera(Camera camera)
         {
-            await _collection.InsertOneAsync(camera);
-            return camera;
+            if (camera == null)
+            {
+                throw new ArgumentNullException(nameof(camera));
+            }
+
+            try
+            {
+                await _collection.InsertOneAsync(camera);
+                _logger?.LogInformation("Successfully created camera with ID: {Id}", camera.Id);
+                return camera;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error creating camera");
+                throw;
+            }
         }
 
-        public async Task<Camera> UpdateCamera(string id, Camera cameraIn)
+        public async Task<Camera?> UpdateCamera(string id, Camera cameraIn)
         {
-            if (!ObjectId.TryParse(id, out _))
+            if (string.IsNullOrEmpty(id) || !ObjectId.TryParse(id, out _))
             {
+                _logger?.LogWarning("Invalid camera ID provided for update: {Id}", id);
                 return null;
             }
 
-            cameraIn.Id = id;
-            var result = await _collection.ReplaceOneAsync(camera => camera.Id == id, cameraIn);
-
-            if (result.ModifiedCount == 0)
+            if (cameraIn == null)
             {
-                return null;
+                throw new ArgumentNullException(nameof(cameraIn));
             }
 
-            return cameraIn;
+            try
+            {
+                cameraIn.Id = id;
+                var result = await _collection.ReplaceOneAsync(camera => camera.Id == id, cameraIn);
+
+                if (result.ModifiedCount == 0)
+                {
+                    _logger?.LogWarning("No camera found to update with ID: {Id}", id);
+                    return null;
+                }
+
+                _logger?.LogInformation("Successfully updated camera with ID: {Id}", id);
+                return cameraIn;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error updating camera with ID: {Id}", id);
+                throw;
+            }
         }
 
         public async Task<bool> DeleteCamera(string id)
         {
-            if (!ObjectId.TryParse(id, out _))
+            if (string.IsNullOrEmpty(id) || !ObjectId.TryParse(id, out _))
             {
+                _logger?.LogWarning("Invalid camera ID provided for deletion: {Id}", id);
                 return false;
             }
 
-            var result = await _collection.DeleteOneAsync(camera => camera.Id == id);
-            return result.DeletedCount > 0;
+            try
+            {
+                var result = await _collection.DeleteOneAsync(camera => camera.Id == id);
+                var deleted = result.DeletedCount > 0;
+
+                if (deleted)
+                {
+                    _logger?.LogInformation("Successfully deleted camera with ID: {Id}", id);
+                }
+                else
+                {
+                    _logger?.LogWarning("No camera found to delete with ID: {Id}", id);
+                }
+
+                return deleted;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error deleting camera with ID: {Id}", id);
+                throw;
+            }
         }
     }
 }

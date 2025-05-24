@@ -7,10 +7,10 @@ namespace AzureFunction.Models
     {
         [BsonId]
         [BsonRepresentation(MongoDB.Bson.BsonType.ObjectId)]
-        public string Id { get; set; }
-        public string brand { get; set; }
-        public string model { get; set; }
-        public decimal price { get; set; }
-        public int megaPixels { get; set; }
+        public string? Id { get; set; }
+        public string? brand { get; set; }
+        public string? model { get; set; }
+        public decimal? price { get; set; }
+        public int? megaPixels { get; set; }
     }
 }
